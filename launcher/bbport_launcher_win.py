@@ -12,6 +12,7 @@ game without the window (`--play`), run.py (`--run`) and the preparation scripts
 so a packaged port needs no Python installation.
 """
 import ctypes
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -223,6 +224,16 @@ def fsr4_files():
             files += [f'fsr4_model_v07_i8_{model}_{tier}_pre.spv', f'fsr4_model_v07_i8_{model}_{tier}_post.spv']
             files += [f'fsr4_model_v07_i8_{model}_{tier}_pass{n}.spv' for n in range(1, 13)]
     return files
+
+
+def fsr4_hashes():
+    """{file name: SHA-256} of the asset set at FSR4_COMMIT (scripts/fsr4_assets.sha256)."""
+    hashes = {}
+    for line in (PORT_DIR / 'scripts' / 'fsr4_assets.sha256').read_text(encoding='utf-8').splitlines():
+        if line.strip() and not line.startswith('#'):
+            digest, name = line.split(None, 1)
+            hashes[name.strip()] = digest.lower()
+    return hashes
 
 
 def fsr4_missing():
@@ -1117,10 +1128,15 @@ class Launcher:
             error = None
             try:
                 folder.mkdir(parents=True, exist_ok=True)
+                hashes = fsr4_hashes()
                 for name in fsr4_missing():
                     part = folder / (name + '.part')
                     with urllib.request.urlopen(f'{FSR4_BASE}/{name}', timeout=60) as response:
-                        part.write_bytes(response.read())
+                        data = response.read()
+                    # Only files matching the pinned commit's hashes are kept.
+                    if hashlib.sha256(data).hexdigest() != hashes.get(name):
+                        raise OSError(f'{name}: SHA-256 does not match scripts/fsr4_assets.sha256')
+                    part.write_bytes(data)
                     part.replace(folder / name)
                     self.ui_calls.put(self.refresh_fsr4)
             except OSError as failure:
