@@ -1446,12 +1446,16 @@ class Launcher:
             pythonw = Path(sys.executable).with_name('pythonw.exe')
             target = str(pythonw if pythonw.exists() else sys.executable)
             arguments, icon = Path(__file__).resolve(), PORT_DIR / 'launcher' / 'bloodborne.ico'
+        # The paths reach PowerShell as environment variables, never inside the script text: a
+        # folder name with quotes or $(...) stays a name.
         script = ('$s=(New-Object -ComObject WScript.Shell).CreateShortcut([Environment]::GetFolderPath("Desktop")'
                   '+"\\Bloodborne.lnk");'
-                  f'$s.TargetPath="{target}";$s.WorkingDirectory="{PORT_DIR}";$s.IconLocation="{icon}";'
-                  + (f"$s.Arguments='\"{arguments}\"';" if arguments else '') + '$s.Save()')
+                  '$s.TargetPath=$env:BB_LNK_TARGET;$s.WorkingDirectory=$env:BB_LNK_DIR;'
+                  '$s.IconLocation=$env:BB_LNK_ICON;if($env:BB_LNK_ARGS){$s.Arguments=$env:BB_LNK_ARGS};$s.Save()')
+        env = dict(os.environ, BB_LNK_TARGET=str(target), BB_LNK_DIR=str(PORT_DIR), BB_LNK_ICON=str(icon),
+                   BB_LNK_ARGS=f'"{arguments}"' if arguments else '')
         result = subprocess.run(['powershell', '-NoProfile', '-Command', script], capture_output=True,
-                                creationflags=NO_WINDOW)
+                                env=env, creationflags=NO_WINDOW)
         if result.returncode == 0:
             self.messagebox.showinfo('Bloodborne', _('Shortcut created on the desktop.', 'Ярлык создан на рабочем столе.'))
         else:
