@@ -65,7 +65,7 @@ window) and `bb-gpu-capabilities.exe`.
 | Guest thread stacks from `runtime_low_map` | Windows allocates them, fully committed (`pthread_attr_setstacksize`): guest code has no stack probes and would skip the guard page. The main thread stack is 16 MiB committed. |
 | glibc `nanosleep`, monotonic condition variables | High-resolution waitable timers (`compat_sleep_ns`; winpthreads' sleep rounds to 15.6 ms); semaphore deadlines use `CLOCK_REALTIME` (winpthreads rejects monotonic condition variables). |
 | `libbbgpu.so` | `libbbgpu.a`, linked into `bb-probe.exe` by CMake (`gpu/CMakeLists.txt`), with a manifest for UTF-8 paths and long paths. |
-| `execlp bash run.sh` (in-game restart) | `run.py` puts its command line in `BB_RESTART_COMMAND`; the new launch waits for the old process (`--after PID`). The launcher keeps the game in a job object. |
+| `execlp bash run.sh` (in-game restart) | `bb-probe.exe` exits with code 75 (`RUNTIME_RESTART_EXIT`) and `run.py` prepares and starts the next launch itself, so no command line comes from the environment. The launcher keeps the game in a job object. |
 | Mod overlay with symlinks | Symlinks when allowed (Developer Mode), else junctions for folders and hard links for files. |
 
 Diagnostics added on the way: `BB_FRAME_DUMP_TRIGGER=<file>` writes the guest display buffer

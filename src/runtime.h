@@ -14,6 +14,8 @@ typedef bb_jmp_buf sigjmp_buf;
 /* Recovery point for speculative guest memory reads on this thread (probe.c fault handler). */
 extern __thread sigjmp_buf *runtime_fault_recover;
 /* Restarts the game (in-game settings menu, render resolution change). */
+/* Exit code of bb-probe.exe asking run.py for a new launch (the in-game restart). */
+#define RUNTIME_RESTART_EXIT 75
 void runtime_restart(void);
 #define ABI __attribute__((sysv_abi))
 typedef void (ABI *GuestCallback)(void);

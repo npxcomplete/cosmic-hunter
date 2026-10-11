@@ -4,8 +4,8 @@
 
 Same environment variables as run.sh (BB_GAME_DIR, BB_DATA_DIR, BB_FPS, BB_RENDER_RES,
 BB_LIVE_RES, BB_PATCHES, BB_MODS_*, BB_USER_DIR, ...). Extra arguments go to bb-probe.
-The in-game "Apply and restart" runs this script again through BB_RESTART_COMMAND;
-`--after PID` waits for the previous game process to end first (its GPU device and memory).
+The in-game "Apply and restart" ends bb-probe with RESTART_EXIT; this script then prepares and
+starts the next launch itself (the old process, its GPU device and memory, are gone by then).
 """
 import ctypes
 import json
@@ -73,15 +73,6 @@ def fail(message):
     sys.exit(1)
 
 
-def wait_for(pid):
-    kernel32 = ctypes.windll.kernel32
-    SYNCHRONIZE = 0x00100000
-    handle = kernel32.OpenProcess(SYNCHRONIZE, False, pid)
-    if handle:
-        kernel32.WaitForSingleObject(handle, 30000)
-        kernel32.CloseHandle(handle)
-
-
 def no_console():
     """Started without a console (the launcher): console programs must not open their own."""
     return 0 if ctypes.windll.kernel32.GetConsoleWindow() else subprocess.CREATE_NO_WINDOW
@@ -124,11 +115,20 @@ def find_executable(name):
     return None
 
 
+# bb-probe's exit code for the in-game restart (RUNTIME_RESTART_EXIT in src/runtime.h).
+RESTART_EXIT = 75
+
+
 def main():
     args = sys.argv[1:]
-    if len(args) >= 2 and args[0] == '--after':
-        wait_for(int(args[1]))
-        args = args[2:]
+    while True:
+        code = launch(args)
+        if code != RESTART_EXIT:
+            return code
+
+
+def launch(args):
+    """Prepares the game image and runs bb-probe once; returns its exit code."""
     # As run.sh: relative paths (BB_GAME_DIR, BB_DATA_DIR, fsr4_shaders/) are from the port.
     os.chdir(PORT)
     env = os.environ
@@ -206,16 +206,12 @@ def main():
         if not env.get('BB_VBLANK_HZ'):
             env['BB_VBLANK_HZ'] = {'uncap': '0', '90': '90'}.get(fps, '60')
 
-        # The in-game restart starts this script again once this process is gone.
         # GPU caches (shaders, pipelines) beside the saves; read before main(), so set here.
         user_dir = Path(env.get('BB_USER_DIR', data / 'user')).resolve()
         user_dir.mkdir(parents=True, exist_ok=True)
         env.setdefault('BB_GPU_USER_DIR', str(user_dir))
         if env.get('BB_ONLINE') == '1':
             online_overrides(env, user_dir)
-        this = ['--run'] if getattr(sys, 'frozen', False) else [str(Path(__file__).resolve())]
-        restart = [sys.executable, *this, '--after', str(os.getpid()), *args]
-        env['BB_RESTART_COMMAND'] = subprocess.list2cmdline(restart)
         command = [str(probe), str(out / 'boot-linked.bin'), '--content-profile', str(out / 'content.bin'),
                    '--patches', str(out / 'patches.bin'), '--app0', str(game),
                    '--user', str(user_dir),
