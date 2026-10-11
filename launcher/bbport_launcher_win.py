@@ -172,7 +172,7 @@ APP_DEFAULTS = {'ui_language': '', 'game_dir': str(PORT_DIR.parent / 'CUSA03173'
                 'frames_ahead': '', 'frame_stats': False, 'gpu_profile': False,
                 'vk_validation': False, 'extra_env': '', 'close_on_play': False,
                 'check_updates': True, 'online': False, 'online_server': 'srv.shadps4.net:31313',
-                'online_webapi': '', 'online_npid': '', 'online_password': '', 'online_upnp': True,
+                'online_webapi': '', 'online_npid': '', 'online_password': '', 'online_upnp': False,
                 'online_community': COMMUNITY_SERVER}
 
 UPSCALERS = [('dlss', ('DLSS (NVIDIA GeForce RTX)',)),
