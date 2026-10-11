@@ -12,6 +12,7 @@ game without the window (`--play`), run.py (`--run`) and the preparation scripts
 so a packaged port needs no Python installation.
 """
 import ctypes
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -45,6 +46,8 @@ VERSION = '1.6'
 COMMUNITY_SERVER = 'https://thehuntersdream.com'
 RELEASES_API = 'https://api.github.com/repos/Supermedo/bloodborne_pc/releases/latest'
 RELEASES_PAGE = 'https://github.com/Supermedo/bloodborne_pc/releases/latest'
+# Update archives are taken only from this project's own release downloads.
+RELEASES_DOWNLOAD = 'https://github.com/Supermedo/bloodborne_pc/releases/download/'
 UPDATE_DIR = Path(tempfile.gettempdir()) / 'bbport-update'
 # Never copied over an installation by an update (the package does not hold them either).
 USER_FILES = ('user', 'out', 'mods', 'bbport.ini', 'mods.json', 'patches.json', 'last_run.log')
@@ -1340,7 +1343,7 @@ class Launcher:
     def check_update(self, manual=False):
         """Helper thread: asks GitHub for the newest release and offers it when it is newer."""
         try:
-            version, url, page = latest_release()
+            version, url, page, sha256 = latest_release()
         except (OSError, ValueError, KeyError) as failure:
             if manual:
                 self.ui_calls.put(lambda error=failure: self.messagebox.showerror(
@@ -1349,13 +1352,13 @@ class Launcher:
 
         def show():
             if version_tuple(version) > version_tuple(VERSION):
-                self.offer_update(version, url, page)
+                self.offer_update(version, url, page, sha256)
             elif manual:
                 self.messagebox.showinfo('Bloodborne', _('You have the latest version ({}).',
                                                          'У вас последняя версия ({}).').format(VERSION))
         self.ui_calls.put(show)
 
-    def offer_update(self, version, url, page):
+    def offer_update(self, version, url, page, sha256):
         if self.update_box:
             return
         tk, ttk = self.tk, self.ttk
@@ -1367,7 +1370,7 @@ class Launcher:
         buttons = tk.Frame(box, bg=CARD)
         buttons.pack(fill='x', padx=10, pady=(0, 10))
         self.update_button = ttk.Button(buttons, text=_('Update', 'Обновить'),
-                                        command=lambda: self.install_update(version, url, page))
+                                        command=lambda: self.install_update(version, url, page, sha256))
         self.update_button.pack(fill='x')
         ttk.Button(buttons, text=_("What's new", 'Что нового'), command=lambda: webbrowser.open(page)).pack(
             fill='x', pady=(4, 0))
@@ -1376,7 +1379,7 @@ class Launcher:
         if not self.process:
             self.status.configure(text=text, fg=GOLD)
 
-    def install_update(self, version, url, page):
+    def install_update(self, version, url, page, sha256):
         if self.process:
             self.messagebox.showinfo('Bloodborne', _('Close the game before updating.', 'Закройте игру перед обновлением.'))
             return
@@ -1396,19 +1399,27 @@ class Launcher:
 
         def work():
             try:
+                # Nothing from the download runs unless it is exactly the archive GitHub lists.
+                if not sha256:
+                    raise OSError('the release lists no SHA-256 for its archive')
                 shutil.rmtree(UPDATE_DIR, ignore_errors=True)
                 UPDATE_DIR.mkdir(parents=True, exist_ok=True)
                 archive = UPDATE_DIR / 'update.zip'
                 request = urllib.request.Request(url, headers={'User-Agent': 'bbport-launcher'})
+                digest = hashlib.sha256()
                 with urllib.request.urlopen(request, timeout=60) as response, open(archive, 'wb') as out:
                     total, done, shown = int(response.headers.get('Content-Length') or 0), 0, -1
                     while chunk := response.read(1 << 20):
                         out.write(chunk)
+                        digest.update(chunk)
                         done += len(chunk)
                         percent = done * 100 // total if total else 0
                         if percent != shown:
                             shown = percent
                             self.ui_calls.put(lambda p=percent: progress(p))
+                if digest.hexdigest() != sha256:
+                    archive.unlink()
+                    raise OSError('the download does not match the SHA-256 the release lists')
                 with zipfile.ZipFile(archive) as package:
                     package.extractall(UPDATE_DIR / 'new')
                 archive.unlink()
@@ -1552,15 +1563,21 @@ def version_tuple(text):
 
 
 def latest_release():
-    """(version, zip URL, page URL) of the newest GitHub release."""
+    """(version, zip URL, page URL, zip SHA-256) of the newest GitHub release. The URL is None
+    unless it is one of this project's release downloads, the hash None when GitHub lists none."""
     request = urllib.request.Request(RELEASES_API, headers={'Accept': 'application/vnd.github+json',
                                                             'User-Agent': 'bbport-launcher'})
     with urllib.request.urlopen(request, timeout=15) as response:
         release = json.load(response)
     version = '.'.join(re.findall(r'\d+', release['tag_name']))
-    url = next((asset['browser_download_url'] for asset in release.get('assets', [])
-                if asset.get('name', '').lower().endswith('.zip')), None)
-    return version, url, release.get('html_url') or RELEASES_PAGE
+    asset = next((asset for asset in release.get('assets', [])
+                  if asset.get('name', '').lower().endswith('.zip')), {})
+    url = asset.get('browser_download_url')
+    if not url or not url.startswith(RELEASES_DOWNLOAD):
+        url = None
+    digest = str(asset.get('digest') or '')
+    sha256 = digest[len('sha256:'):].lower() if digest.startswith('sha256:') else None
+    return version, url, release.get('html_url') or RELEASES_PAGE, sha256
 
 
 def install_update(target, wait_pid):
