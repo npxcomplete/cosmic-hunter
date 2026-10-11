@@ -230,6 +230,102 @@ def fsr4_missing():
     return [name for name in fsr4_files() if not (folder / name).is_file() or not (folder / name).stat().st_size]
 
 
+# The shadNet password lives in Windows Credential Manager (DPAPI, per user), not settings.json.
+CREDENTIAL_TARGET = 'bbport-launcher/shadNet'
+CRED_TYPE_GENERIC = 1
+CRED_PERSIST_LOCAL_MACHINE = 2
+CREDENTIAL_API = []  # credential_api()'s answer, looked up once
+
+
+def credential_api():
+    """(advapi32, CREDENTIALW) on Windows, else None."""
+    if not CREDENTIAL_API:
+        CREDENTIAL_API.append(load_credential_api())
+    return CREDENTIAL_API[0]
+
+
+def load_credential_api():
+    try:
+        from ctypes import wintypes
+        advapi = ctypes.windll.advapi32
+    except (AttributeError, ImportError, ValueError, OSError):
+        return None
+
+    class CREDENTIALW(ctypes.Structure):
+        _fields_ = [('Flags', wintypes.DWORD), ('Type', wintypes.DWORD), ('TargetName', wintypes.LPWSTR),
+                    ('Comment', wintypes.LPWSTR), ('LastWritten', wintypes.FILETIME),
+                    ('CredentialBlobSize', wintypes.DWORD), ('CredentialBlob', ctypes.POINTER(ctypes.c_ubyte)),
+                    ('Persist', wintypes.DWORD), ('AttributeCount', wintypes.DWORD),
+                    ('Attributes', ctypes.c_void_p), ('TargetAlias', wintypes.LPWSTR),
+                    ('UserName', wintypes.LPWSTR)]
+
+    advapi.CredReadW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
+                                 ctypes.POINTER(ctypes.POINTER(CREDENTIALW))]
+    advapi.CredReadW.restype = wintypes.BOOL
+    advapi.CredWriteW.argtypes = [ctypes.POINTER(CREDENTIALW), wintypes.DWORD]
+    advapi.CredWriteW.restype = wintypes.BOOL
+    advapi.CredDeleteW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD]
+    advapi.CredDeleteW.restype = wintypes.BOOL
+    advapi.CredFree.argtypes = [ctypes.c_void_p]
+    advapi.CredFree.restype = None
+    return advapi, CREDENTIALW
+
+
+def credential_read():
+    """The stored shadNet password ('' when none), or None without Credential Manager."""
+    api = credential_api()
+    if not api:
+        return None
+    advapi, credential = api
+    pointer = ctypes.POINTER(credential)()
+    if not advapi.CredReadW(CREDENTIAL_TARGET, CRED_TYPE_GENERIC, 0, ctypes.byref(pointer)):
+        return ''
+    try:
+        found = pointer.contents
+        return ctypes.string_at(found.CredentialBlob, found.CredentialBlobSize).decode('utf-16-le')
+    finally:
+        advapi.CredFree(pointer)
+
+
+def credential_write(user, password):
+    """Stores the shadNet password (an empty one removes it). False without Credential Manager."""
+    api = credential_api()
+    if not api:
+        return False
+    advapi, credential = api
+    if not password:
+        advapi.CredDeleteW(CREDENTIAL_TARGET, CRED_TYPE_GENERIC, 0)  # none stored is fine too
+        return True
+    blob = password.encode('utf-16-le')
+    buffer = (ctypes.c_ubyte * len(blob)).from_buffer_copy(blob)
+    entry = credential(Type=CRED_TYPE_GENERIC, TargetName=CREDENTIAL_TARGET, CredentialBlobSize=len(blob),
+                       CredentialBlob=ctypes.cast(buffer, ctypes.POINTER(ctypes.c_ubyte)),
+                       Persist=CRED_PERSIST_LOCAL_MACHINE, UserName=user or 'shadNet')
+    return bool(advapi.CredWriteW(ctypes.byref(entry), 0))
+
+
+def load_settings():
+    """The launcher's settings, with the shadNet password from Credential Manager. A password an
+    older version left in settings.json moves there (and out of the file)."""
+    settings = {**APP_DEFAULTS, **load_json(CONFIG_FILE, {})}
+    if settings['online_password']:
+        if credential_write(str(settings['online_npid']).strip(), str(settings['online_password'])):
+            save_settings(settings)
+    else:
+        settings['online_password'] = credential_read() or ''
+    return settings
+
+
+def save_settings(settings):
+    """settings.json without the password, which goes to Credential Manager (it stays in the file
+    only where Credential Manager is unavailable, so it is never lost)."""
+    stored = dict(settings)
+    if credential_write(str(settings['online_npid']).strip(), str(settings['online_password'])):
+        stored['online_password'] = ''
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    CONFIG_FILE.write_text(json.dumps(stored, indent=2, ensure_ascii=False), encoding='utf-8')
+
+
 def load_json(path, default):
     try:
         return json.loads(Path(path).read_text(encoding='utf-8'))
@@ -390,7 +486,7 @@ class Launcher:
     def __init__(self, root, tk, ttk, filedialog, messagebox):
         self.tk, self.ttk, self.filedialog, self.messagebox = tk, ttk, filedialog, messagebox
         self.root = root
-        self.app = {**APP_DEFAULTS, **load_json(CONFIG_FILE, {})}
+        self.app = load_settings()
         self.ini, self.ini_lines = load_ini()
         self.vars = {}
         self.process = self.job = None
@@ -909,7 +1005,7 @@ class Launcher:
                  _('Your shadNet account name, not your email. Register one at shadnet.shadps4.net, or ask the '
                    'owner of a private server.'))
         self.row(f, _('Password'), ttk.Entry(f, textvariable=self.var('online_password', 'app'), width=40, show='•'),
-                 _('Saved on this PC with the other launcher settings.'))
+                 _('Saved in Windows Credential Manager for your Windows account, not in the settings file.'))
         self.section(f, _('Connection'))
         self.check(f, 'online_upnp', 'app', _('UPnP (open a port on the router automatically)'),
                    _('Turn it off on Tailscale or another VPN.'))
@@ -1200,8 +1296,7 @@ class Launcher:
                     f'{float(value):.2f}' if key == 'sharpness' else str(value)
             else:
                 self.app[key] = value
-        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-        CONFIG_FILE.write_text(json.dumps(self.app, indent=2, ensure_ascii=False), encoding='utf-8')
+        save_settings(self.app)
         save_ini({key: self.ini[key] for key in INI_DEFAULTS}, self.ini_lines)
         self.ini, self.ini_lines = load_ini()
         if self.mod_order:
@@ -1595,7 +1690,7 @@ def main():
     args = sys.argv[1:]
     if args and args[0] in ('--run', '--script'):
         sys.exit(run_role(args))
-    settings = {**APP_DEFAULTS, **load_json(CONFIG_FILE, {})}
+    settings = load_settings()
     LANG = settings.get('ui_language') or windows_language()
     if args[:1] == ['--install-update'] and len(args) == 3:
         sys.exit(install_update(args[1], args[2]))
