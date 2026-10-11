@@ -334,6 +334,21 @@ def server_check(server, webapi, community):
     return '\n'.join(lines)
 
 
+# Shown once before online play is first used: the game's own network code runs natively here.
+ONLINE_RISK = ("Online play: messages, bloodstains, ghosts and data from other players are read by the game's "
+               "original PS4 code. Here that code runs with your full Windows permissions and without the "
+               "PS4's security sandbox, so a malicious server or player could use a bug in it to run programs "
+               "on your PC.\n\nPlay online only if you accept that risk. Turn online play on?")
+
+
+def remember_online_risk_ack():
+    """Stores the player's acceptance of ONLINE_RISK (only that key of settings.json)."""
+    data = load_json(CONFIG_FILE, {})
+    data['online_risk_ack'] = True
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    CONFIG_FILE.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding='utf-8')
+
+
 def game_environment(s):
     env = dict(os.environ)
     env['BB_GAME_DIR'] = s['game_dir']
@@ -892,6 +907,12 @@ class Launcher:
         self.check(f, 'online', 'app', _('Play online'),
                    _('Off: the game stays offline, as before.'))
         self.var('online', 'app').trace_add('write', lambda *_a: self.refresh_status())
+        online = self.var('online', 'app')
+
+        def confirm_online(*_a):
+            if online.get() and not self.confirm_online_risk():
+                online.set(False)
+        online.trace_add('write', confirm_online)
         self.section(f, _('Game server (messages, bloodstains, ghosts)'))
         community = self.var('online_community', 'app')
         self.row(f, _('Game server'), ttk.Entry(f, textvariable=community, width=40),
@@ -1228,6 +1249,9 @@ class Launcher:
             if choice is None:
                 return
             online.set(bool(choice))
+        # Online turned on before the risk notice existed: ask now; No plays offline.
+        if online.get() and not self.confirm_online_risk():
+            online.set(False)
         if online.get() and '@' in npid.get():
             self.messagebox.showwarning(
                 'Bloodborne', _('The Online ID is the account name (NPID) you registered on the server, '
@@ -1302,6 +1326,16 @@ class Launcher:
     def stop(self):
         if self.job:
             self.job.terminate()
+
+    def confirm_online_risk(self):
+        """True once the player has accepted ONLINE_RISK (asked the first time only)."""
+        if self.app.get('online_risk_ack'):
+            return True
+        if not self.messagebox.askyesno('Bloodborne', _(ONLINE_RISK), icon='warning'):
+            return False
+        self.app['online_risk_ack'] = True
+        remember_online_risk_ack()
+        return True
 
     def append(self, text):
         self.log.configure(state='normal')
@@ -1531,6 +1565,12 @@ def play_without_window(settings):
     """--play: the game with the saved settings (shortcuts, Steam). Output goes to the console
     when there is one and to <saves folder>/last_run.log."""
     attach_stdio()
+    if settings.get('online') and not settings.get('online_risk_ack'):
+        # No launcher window here: a plain Windows message box (MB_YESNO | MB_ICONWARNING; 6 = Yes).
+        if ctypes.windll.user32.MessageBoxW(None, _(ONLINE_RISK), 'Bloodborne', 0x34) == 6:
+            remember_online_risk_ack()
+        else:
+            settings = {**settings, 'online': False}
     log_dir = Path(settings.get('user_dir') or DATA_DIR / 'user')
     log_dir.mkdir(parents=True, exist_ok=True)
     with open(log_dir / 'last_run.log', 'w', encoding='utf-8', buffering=1) as log:

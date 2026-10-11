@@ -71,6 +71,11 @@ Everyone you want to play with needs game version 1.09 and the same co-op server
 shadNet server (from the [shadp2p](https://github.com/Wozzardman/shadp2p) project) works too:
 put its address in **Server address**.
 
+> **Before you turn it on:** online, the game's original PS4 network code reads data from the
+> servers and from other players. On a PS4 that code ran in Sony's security sandbox; here it runs
+> with your full Windows permissions, so a malicious server or player could use a bug in it to run
+> programs on your PC. The launcher asks you to accept this the first time.
+
 ## Known issues
 
 - The character preview on the character creation screen stays empty. The character is
