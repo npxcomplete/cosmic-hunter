@@ -70,6 +70,26 @@ def attach_stdio():
         setattr(sys, name, stream or open(os.devnull, 'w'))
 
 
+# What --script may run: the preparation scripts run.py starts, from this installation only.
+# Anything else would make Bloodborne.exe a general Python interpreter.
+PREPARATION_SCRIPTS = ('content_profile.py', 'link_libc.py', 'link_modules.py', 'mods.py',
+                       'patches.py', 'prepare.py')
+
+
+def preparation_script(name):
+    """The bundled script `name` names (scripts/<name>), or None for anything else."""
+    path = Path(name)
+    bundled = PORT_DIR / 'scripts' / path.name
+    if path.name not in PREPARATION_SCRIPTS or not bundled.is_file():
+        return None
+    try:
+        if path.resolve() != bundled.resolve():
+            return None
+    except OSError:
+        return None
+    return bundled
+
+
 def run_role(argv):
     """--run [args]: run.py; --script <file> [args]: a preparation script. Returns an exit code."""
     attach_stdio()
@@ -79,7 +99,12 @@ def run_role(argv):
         except (AttributeError, ValueError):
             pass
     if argv[0] == '--script':
-        path, sys.argv = argv[1], argv[1:]
+        script = preparation_script(argv[1]) if len(argv) > 1 else None
+        if not script:
+            print('--script runs only the bundled preparation scripts: ' + ', '.join(PREPARATION_SCRIPTS),
+                  file=sys.stderr)
+            return 2
+        path, sys.argv = str(script), argv[1:]
     else:
         path = str(PORT_DIR / 'run.py')
         sys.argv = [path, *argv[1:]]
