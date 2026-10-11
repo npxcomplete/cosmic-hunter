@@ -9,7 +9,8 @@ from patches import (EBOOT_BASE, OUTPUT_SIZE, RESOLUTION_TEMPLATE, SCENE_HEIGHT,
                      SCENE_WIDTH, UI_HEIGHT, UI_WIDTH, compile_patches,
                      render_size, resolution_writes, scaled_sizes, effect_patches,
                      validate_patch_requirements, external_patches, external_selection,
-                     compile_external)
+                     compile_external, patch_fingerprint)
+import patches
 
 XML = ROOT / 'patches/Bloodborne.xml'
 SEGMENTS = [(0, 0x6000000)]
@@ -150,13 +151,29 @@ class ExternalPatchTests(unittest.TestCase):
             found = external_patches(folder)
             self.assertEqual([key for key, _, _ in found],
                              ['extra.xml/On', 'extra.xml/Off', 'extra.xml/Mask'])
-            # The file's isEnabled; the mask patch is skipped as a whole.
-            writes = compile_external(external_selection(found, None), SEGMENTS)
+            # An unknown patch ignores its file's isEnabled.
+            self.assertEqual(compile_external(external_selection(found, None), SEGMENTS), [])
+            # A known community patch follows it; the mask patch is skipped as a whole.
+            on = next(meta for key, _, meta in found if key == 'extra.xml/On')
+            mask = next(meta for key, _, meta in found if key == 'extra.xml/Mask')
+            known = frozenset({patch_fingerprint(on), patch_fingerprint(mask)})
+            original, patches.known_patches = patches.known_patches, lambda path=None: known
+            try:
+                writes = compile_external(external_selection(found, None), SEGMENTS)
+            finally:
+                patches.known_patches = original
             self.assertEqual(writes, [(0x1000, bytes.fromhex('9090'))])
             config = folder / 'patches.json'
             config.write_text('{"enabled": ["extra.xml/Off"], "disabled": ["extra.xml/On"]}')
             writes = compile_external(external_selection(found, config), SEGMENTS)
             self.assertEqual(writes, [(0x2000, (0x12345678).to_bytes(4, 'little'))])
+
+    def test_built_in_patches_are_known_community_patches(self):
+        # patches/known_patches.json comes from the community repositories the built-in file is
+        # taken from: every built-in patch must be in it.
+        root = ET.parse(XML).getroot()
+        unknown = [m.get('Name') for m in root.iter('Metadata') if patch_fingerprint(m) not in patches.known_patches()]
+        self.assertEqual(unknown, [])
 
     def test_built_in_file_is_not_external(self):
         self.assertEqual(external_patches(XML.parent), [])

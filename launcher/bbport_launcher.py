@@ -25,7 +25,7 @@ from gi.repository import Adw, Gio, GLib, Gtk  # noqa: E402
 PORT_DIR = Path(__file__).resolve().parent.parent  # native_probe (or the package's copy)
 sys.path.insert(0, str(PORT_DIR / 'scripts'))
 from mods import discover as discover_mods  # noqa: E402
-from patches import external_patches  # noqa: E402
+from patches import enabled_by_default, external_patches, is_known_patch  # noqa: E402
 # Packaged (AppImage): generated files, saves and bbport.ini live in BB_DATA_DIR.
 PACKAGED = bool(os.environ.get("BB_PREBUILT"))
 DATA_DIR = Path(os.environ.get("BB_DATA_DIR", PORT_DIR))
@@ -687,11 +687,14 @@ class LauncherWindow(Adw.ApplicationWindow):
             profile = {}
         found = external_patches(directory)
         for key, _path, meta in found:
-            default = meta.get("isEnabled", "false").lower() == "true"
+            # Only known community patches may switch themselves on (isEnabled).
+            default = enabled_by_default(meta)
             active = key in profile.get("enabled", []) or (default and key not in profile.get("disabled", []))
             subtitle = key.split("/", 1)[0]
             if meta.get("Author"):
                 subtitle += " · " + tr("Автор: {}").format(meta.get("Author"))
+            if not is_known_patch(meta):
+                subtitle += " · " + tr("не из известных патчей сообщества: выполняет код в игре")
             row = Adw.SwitchRow(title=GLib.markup_escape_text(meta.get("Name") or key),
                                 subtitle=GLib.markup_escape_text(subtitle), active=active)
             if meta.get("Note"):

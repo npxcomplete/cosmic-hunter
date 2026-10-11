@@ -66,6 +66,7 @@ EN = {
     "Открыть папку патчей": "Open the patches folder",
     "Патчей нет": "No patches",
     "Автор: {}": "Author: {}",
+    "не из известных патчей сообщества: выполняет код в игре": "not a known community patch: it runs code in the game",
     # Screen
     "Экран": "Display",
     "Разрешение вывода": "Output resolution",
