@@ -82,7 +82,8 @@ public:
     void SetShadNetSessionDisabled(bool v) { shadnet_session_disabled.store(v); }
     std::string GetShadNetServer() { return Text("BB_SHADNET_SERVER", "127.0.0.1:31313"); }
     std::string GetShadNetWebApiServer() { return Text("BB_SHADNET_WEBAPI", "http://127.0.0.1:31315"); }
-    bool IsUPnPEnabled() { static const auto value = Flag("BB_UPNP", true); return value; }
+    // bbport: off unless asked for (BB_UPNP=1): an open router port exposes the game's P2P code.
+    bool IsUPnPEnabled() { static const auto value = Flag("BB_UPNP", false); return value; }
 
 private:
     std::atomic<bool> shadnet_session_disabled{false};

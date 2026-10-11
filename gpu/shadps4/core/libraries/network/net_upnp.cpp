@@ -122,9 +122,16 @@ void UPnPClient::AddMapping(u16 port) {
         return;
 
     const std::string port_str = std::to_string(port);
-    const int ret =
-        UPNP_AddPortMapping(m_urls.controlURL, m_data.first.servicetype, port_str.c_str(),
-                            port_str.c_str(), m_lan_addr, "shadPS4", "UDP", nullptr, "0");
+    // bbport: a 24-hour lease instead of a permanent mapping, so a game that crashes or is
+    // killed (RemoveMapping never runs) does not leave the port open on the router for good.
+    // Routers that accept only permanent mappings (UPnP error 725) still get one.
+    constexpr int OnlyPermanentLeasesSupported = 725;
+    int ret = UPNP_AddPortMapping(m_urls.controlURL, m_data.first.servicetype, port_str.c_str(),
+                                  port_str.c_str(), m_lan_addr, "shadPS4", "UDP", nullptr, "86400");
+    if (ret == OnlyPermanentLeasesSupported) {
+        ret = UPNP_AddPortMapping(m_urls.controlURL, m_data.first.servicetype, port_str.c_str(),
+                                  port_str.c_str(), m_lan_addr, "shadPS4", "UDP", nullptr, "0");
+    }
 
     if (ret == UPNPCOMMAND_SUCCESS) {
         m_external_port.store(port);
