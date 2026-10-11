@@ -36,7 +36,8 @@ Data
 - Generated files (prepared game image, patches): out\.
 
 Online play (beta)
-- Register a shadNet account at https://shadnet.shadps4.net. In the launcher open
+- Register a shadNet account at https://shadnet.shadps4.net with a password you use nowhere
+  else: shadNet sends the login without encryption. In the launcher open
   "Online co-op", tick "Play online", enter the account name (not the email) and password,
   press "Test connection", then PLAY and choose online at the title screen.
 - Messages, bloodstains and ghosts come from The Hunter's Dream (https://thehuntersdream.com);

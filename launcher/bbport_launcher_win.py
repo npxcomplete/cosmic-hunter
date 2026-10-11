@@ -905,6 +905,10 @@ class Launcher:
                  _('Of the shadNet server, not the game server. Leave empty: the server address with '
                    'port 31315 is used.'))
         self.section(f, _('Account'))
+        # The shadNet protocol has no TLS: the login (password included) crosses the network as is.
+        self.note(f, _('Your account name and password are sent to the co-op server without encryption '
+                       '(the shadNet protocol has no TLS yet): anyone on the network path can read them. '
+                       'Use a password you use nowhere else.'), top=4)
         self.row(f, _('Online ID (NPID)'), ttk.Entry(f, textvariable=self.var('online_npid', 'app'), width=40),
                  _('Your shadNet account name, not your email. Register one at shadnet.shadps4.net, or ask the '
                    'owner of a private server.'))
