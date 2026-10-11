@@ -23,10 +23,22 @@ for model in native quality balanced performance ultraperf drs; do
         done
     done
 done
+# Every file must match scripts/fsr4_assets.sha256 (the hashes at the pinned commit): a file
+# changed on the way or on the server is deleted, never used.
+manifest=scripts/fsr4_assets.sha256
+expected() { awk -v name="$1" '$1 !~ /^#/ && $2 == name { print $1 }' "$manifest"; }
+matches() { [[ -n $2 && $(sha256sum "$1" | cut -d' ' -f1) == "$2" ]]; }
 fetched=0
 for file in "${files[@]}"; do
-    if [[ -s $dest/$file ]]; then continue; fi
+    hash=$(expected "$file")
+    if [[ -z $hash ]]; then echo "FSR 4 assets: $file is not in $manifest" >&2; exit 1; fi
+    if [[ -s $dest/$file ]] && matches "$dest/$file" "$hash"; then continue; fi
     curl -fsSL --retry 3 -o "$dest/$file.part" "$base/$file"
+    if ! matches "$dest/$file.part" "$hash"; then
+        rm -f "$dest/$file.part"
+        echo "FSR 4 assets: $file does not match its SHA-256 in $manifest" >&2
+        exit 1
+    fi
     mv "$dest/$file.part" "$dest/$file"
     fetched=$((fetched + 1))
 done
