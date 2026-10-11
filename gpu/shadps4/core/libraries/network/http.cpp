@@ -95,6 +95,9 @@ struct HttpConnection {
     u16 port = 0;            // Numeric port. 80 / 443 if scheme-default.
     bool keep_alive = false; // Game-controlled keep-alive intent.
     bool is_secure = false;  // True if scheme == "https".
+    // bbport: true when host_overrides.json redirected this connection. The new host was
+    // chosen by the player or launcher (a public server), so its certificate is always checked.
+    bool host_overridden = false;
     HttpSettings settings;
     int epoll_id = 0;
     void* epoll_user_arg = nullptr;
@@ -464,6 +467,9 @@ struct SendRequestPlan {
     // True if the request's owning ctx had sceHttpsLoadCert called. In that
     // case we bypass TLS verification because we can't load the game's CAs.
     bool ctx_has_loaded_certs = false;
+    // bbport: true when the destination came from host_overrides.json or the seamless
+    // co-op route: never bypass certificate verification for it.
+    bool host_overridden = false;
 };
 
 // Extract the path-and-query portion from a full URL
@@ -829,6 +835,7 @@ bool ApplyBloodborneSeamlessRoute(SendRequestPlan& plan) {
     } else if (plan.scheme != old_scheme) {
         plan.port = (plan.scheme == "https") ? 443 : 80;
     }
+    plan.host_overridden = true;
     RewriteHostHeader(plan);
     plan.headers.emplace_back("X-ShadPS4-Bloodborne-Seamless", "1");
     if (IsBloodborneSummonRequestPath(plan.path) || IsBloodborneSummonSearchPath(plan.path)) {
@@ -972,7 +979,19 @@ static s32 RunRealHttpRequest(const SendRequestPlan& plan_in, HttpResponse& out_
             const bool game_disabled_verify =
                 (plan.settings.ssl_flags & ORBIS_HTTPS_FLAG_SERVER_VERIFY) == 0;
             bool verify_server = !game_disabled_verify;
-            if (verify_server && plan.ctx_has_loaded_certs) {
+            if (plan.host_overridden) {
+                // bbport: a redirected host is a public server the player chose, not the
+                // game's private-CA endpoint: verify it against the system store whatever
+                // the game's flags. SHADPS4_HTTP_INSECURE_OVERRIDES=1 allows a private server
+                // with a self-signed certificate.
+                verify_server = !EnvFlagEnabled("SHADPS4_HTTP_INSECURE_OVERRIDES");
+                if (!verify_server) {
+                    LOG_WARNING(Lib_Http,
+                                "{}://{}: redirected host, certificate verification disabled by "
+                                "SHADPS4_HTTP_INSECURE_OVERRIDES",
+                                plan.scheme, plan.host);
+                }
+            } else if (verify_server && plan.ctx_has_loaded_certs) {
                 verify_server = false;
                 LOG_INFO(Lib_Http,
                          "{}://{}: ctx loaded custom CAs (libSceSsl integration absent) -> "
@@ -980,7 +999,7 @@ static s32 RunRealHttpRequest(const SendRequestPlan& plan_in, HttpResponse& out_
                          plan.scheme, plan.host);
             }
             cli.enable_server_certificate_verification(verify_server);
-            if (game_disabled_verify) {
+            if (game_disabled_verify && !plan.host_overridden) {
                 LOG_INFO(Lib_Http, "{}://{}: server cert verification disabled (ssl_flags={:#x})",
                          plan.scheme, plan.host, plan.settings.ssl_flags);
             }
@@ -1392,7 +1411,7 @@ int PS4_SYSV_ABI sceHttpCreateConnection(int tmplId, const char* serverName, con
     std::string scheme_str = is_secure ? "https" : "http";
     std::string host_str = serverName;
     u16 effective_port = port;
-    ApplyHostOverride(scheme_str, host_str, effective_port, is_secure);
+    const bool overridden = ApplyHostOverride(scheme_str, host_str, effective_port, is_secure);
     const int conn_id = ++g_state.next_obj_id;
     HttpConnection conn;
     conn.tmpl_id = tmplId;
@@ -1401,6 +1420,7 @@ int PS4_SYSV_ABI sceHttpCreateConnection(int tmplId, const char* serverName, con
     conn.port = effective_port;
     conn.keep_alive = (isEnableKeepalive != 0);
     conn.is_secure = is_secure;
+    conn.host_overridden = overridden;
     conn.url = scheme_str + "://" + host_str + ":" + std::to_string(effective_port);
     if (auto tmpl_it = g_state.templates.find(tmplId); tmpl_it != g_state.templates.end()) {
         conn.settings = tmpl_it->second.settings;
@@ -1460,8 +1480,9 @@ int PS4_SYSV_ABI sceHttpCreateConnectionWithURL(int tmplId, const char* url, boo
     scheme_str = is_secure ? "https" : "http";
     u16 port = parsed.port;
     std::string host_str = parsed.hostname;
-    ApplyHostOverride(scheme_str, host_str, port, is_secure,
-                      parsed.path ? std::string_view{parsed.path} : std::string_view{"/"});
+    const bool overridden =
+        ApplyHostOverride(scheme_str, host_str, port, is_secure,
+                          parsed.path ? std::string_view{parsed.path} : std::string_view{"/"});
 
     std::lock_guard<std::mutex> lock(g_state.m_mutex);
     if (!g_state.inited) {
@@ -1482,6 +1503,7 @@ int PS4_SYSV_ABI sceHttpCreateConnectionWithURL(int tmplId, const char* url, boo
     conn.port = port;
     conn.keep_alive = enableKeepalive;
     conn.is_secure = is_secure;
+    conn.host_overridden = overridden;
     if (auto tmpl_it = g_state.templates.find(tmplId); tmpl_it != g_state.templates.end()) {
         conn.settings = tmpl_it->second.settings;
         conn.epoll_id = tmpl_it->second.epoll_id;
@@ -1748,6 +1770,7 @@ int PS4_SYSV_ABI sceHttpSendRequest(int reqId, const void* postData, u64 size) {
             plan.scheme = conn_it->second.scheme;
             plan.host = conn_it->second.hostname;
             plan.port = static_cast<u16>(conn_it->second.port);
+            plan.host_overridden = conn_it->second.host_overridden;
             // Inherit headers in tmpl to conn to req order
             if (auto tmpl_it = g_state.templates.find(conn_it->second.tmpl_id);
                 tmpl_it != g_state.templates.end()) {
