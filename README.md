@@ -61,7 +61,9 @@ Keyboard: WASD move, arrows camera, Space Cross, Left Shift Circle, E Square, Q 
 
 ## Playing online (beta)
 
-1. Register a shadNet account at [shadnet.shadps4.net](https://shadnet.shadps4.net).
+1. Register a shadNet account at [shadnet.shadps4.net](https://shadnet.shadps4.net) with a password
+   you use nowhere else: the shadNet protocol has no encryption yet, so the account name and
+   password travel over the network as they are.
 2. In the launcher, open **Online co-op**, tick **Play online** and enter your account name
    (not your email) and password.
 3. Press **Test connection**: all three lines should say "reachable". Then press **PLAY** and
