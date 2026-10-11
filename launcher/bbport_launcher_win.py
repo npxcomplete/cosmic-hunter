@@ -1140,7 +1140,7 @@ class Launcher:
             return
         tk, ttk = self.tk, self.ttk
         from mods import discover
-        from patches import external_patches
+        from patches import enabled_by_default, external_patches, is_known_patch
         for holder in (self.mods_frame, self.patches_frame):
             for widget in holder.winfo_children():
                 widget.destroy()
@@ -1175,12 +1175,17 @@ class Launcher:
             ttk.Label(self.patches_frame, text=_('No patch files for version 1.09 yet.', 'Пока нет патчей для версии 1.09.'),
                       style='Muted.TLabel').pack(anchor='w')
         for key, _path, meta in found:
+            # Only known community patches may switch themselves on (isEnabled); others stay off
+            # until the player ticks them.
             on = key in chosen.get('enabled', []) or (key not in chosen.get('disabled', []) and
-                                                      meta.get('isEnabled', 'false').lower() == 'true')
+                                                      enabled_by_default(meta))
             var = tk.BooleanVar(value=old.get(key, on))
             self.patch_vars[key] = var
             author = meta.get('Author')
-            ttk.Checkbutton(self.patches_frame, text=key + (f'  —  {author}' if author else ''), variable=var).pack(anchor='w')
+            text = key + (f'  —  {author}' if author else '')
+            if not is_known_patch(meta):
+                text += '  —  ' + _('not a known community patch: it runs code in the game')
+            ttk.Checkbutton(self.patches_frame, text=text, variable=var).pack(anchor='w')
 
     def move_mod(self, index, step):
         other = index + step

@@ -5,6 +5,8 @@ image places eboot vaddr 0 at image offset 0. Only literal writes are supported
 (bytes, bytes16/32/64, float32/64, utf8, utf16); pattern ("mask") patches are rejected.
 """
 import argparse
+import functools
+import hashlib
 import json
 import os
 import struct
@@ -231,15 +233,52 @@ def external_patches(directory, app_version='01.09', exclude=Path(__file__).reso
     return found
 
 
+# External patches write machine code into the game. Only those published in the community patch
+# repositories (shadps4-emu/ps4_cheats, illusion0001/PS4-PS5-Game-Patch) may switch themselves on
+# with isEnabled; any other patch runs only when the player enables it (launcher, patches.json).
+KNOWN_PATCHES=Path(__file__).resolve().parent.parent/'patches/known_patches.json'
+
+
+def patch_fingerprint(meta):
+    """SHA-256 of a patch's writes (type, address and value of each line), whatever the file's
+    formatting, name or author."""
+    lines=[[line.get('Type') or '',(line.get('Address') or '').strip().lower(),
+            (line.get('Value') or '').replace(' ','').upper()] for line in meta.iter('Line')]
+    return hashlib.sha256(json.dumps(lines,separators=(',',':')).encode()).hexdigest()
+
+
+@functools.lru_cache(maxsize=None)
+def known_patches(path=KNOWN_PATCHES):
+    try:
+        return frozenset(json.loads(Path(path).read_text())['sha256'])
+    except (OSError, ValueError, KeyError, TypeError):
+        return frozenset()
+
+
+def is_known_patch(meta):
+    return patch_fingerprint(meta) in known_patches()
+
+
+def enabled_by_default(meta):
+    """A file's isEnabled counts only for known community patches."""
+    return meta.get('isEnabled','false').lower()=='true' and is_known_patch(meta)
+
+
 def external_selection(found, config):
     """Selected external patches: patches.json {"enabled": [...], "disabled": [...]} overrides
-    each file's isEnabled."""
+    each file's isEnabled, which only known community patches may use (enabled_by_default)."""
     settings={}
     if config and Path(config).is_file():
         settings=json.loads(Path(config).read_text())
     enabled,disabled=set(settings.get('enabled',[])),set(settings.get('disabled',[]))
-    return [(key,path,meta) for key,path,meta in found
-            if key in enabled or (key not in disabled and meta.get('isEnabled','false').lower()=='true')]
+    selected=[]
+    for key,path,meta in found:
+        if key in enabled or (key not in disabled and enabled_by_default(meta)):
+            selected.append((key,path,meta))
+        elif key not in disabled and meta.get('isEnabled','false').lower()=='true':
+            print(f'Patches: {key} is not a known community patch: enable it in the launcher to use it',
+                  file=sys.stderr)
+    return selected
 
 
 def compile_external(selected, segments):
